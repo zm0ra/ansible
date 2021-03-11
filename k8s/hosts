@@ -1,0 +1,19 @@
+[masters]
+master ansible_host=100.64.0.5 ansible_user=root ansible_host_alias=doc-master
+
+[workers]
+worker1 ansible_host=100.64.0.10 ansible_user=root ansible_host_alias=doc-pod1
+worker2 ansible_host=100.64.0.11 ansible_user=root ansible_host_alias=doc-pod2
+worker3 ansible_host=100.64.0.12 ansible_user=root ansible_host_alias=doc-pod3
+worker4 ansible_host=100.64.0.13 ansible_user=root ansible_host_alias=doc-pod4
+worker5 ansible_host=100.64.0.14 ansible_user=root ansible_host_alias=doc-pod5
+worker6 ansible_host=100.64.0.15 ansible_user=root ansible_host_alias=doc-pod6
+worker7 ansible_host=100.64.0.16 ansible_user=root ansible_host_alias=doc-pod7
+worker8 ansible_host=100.64.0.17 ansible_user=root ansible_host_alias=doc-pod8
+worker9 ansible_host=100.64.0.18 ansible_user=root ansible_host_alias=doc-pod9
+worker10 ansible_host=100.64.0.19 ansible_user=root ansible_host_alias=doc-pod10
+worker11 ansible_host=100.64.0.20 ansible_user=root ansible_host_alias=doc-pod11
+worker12 ansible_host=100.64.0.21 ansible_user=root ansible_host_alias=doc-pod12
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3

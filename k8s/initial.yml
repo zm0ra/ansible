@@ -1,0 +1,45 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: create the 'docker' user
+      user: name=docker append=yes state=present createhome=yes shell=/bin/bash
+
+    - name: Install sudo using apt
+      apt: name=sudo state=latest update_cache=yes force_apt_get=yes
+
+    - name: allow 'docker' to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        line: 'docker ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+    - name: set up authorized keys for the docker user
+      authorized_key: user=docker key="{{item}}"
+      with_file:
+        - /root/.ssh/authorized_keys
+
+    - name: Wipe /etc/hosts
+      file:
+        path: /etc/hosts
+        state: absent
+
+    - name: Update /etc/hosts
+      become: true
+      blockinfile:
+        path: /etc/hosts
+        create: yes
+        block: |
+          127.0.0.1 localhost
+
+          # The following lines are desirable for IPv6 capable hosts
+          ::1 ip6-localhost ip6-loopback
+          fe00::0 ip6-localnet
+          ff00::0 ip6-mcastprefix
+          ff02::1 ip6-allnodes
+          ff02::2 ip6-allrouters
+          ff02::3 ip6-allhosts
+
+          {% for item in ansible_play_batch %}
+          {{ hostvars[item].ansible_host }}   {{ item }}  {{ hostvars[item].ansible_host_alias }}
+          {% endfor %}
+
