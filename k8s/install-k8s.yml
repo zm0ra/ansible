@@ -1,0 +1,254 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: create the 'docker' user
+      user: 
+        name: docker
+        state: present
+        createhome: yes
+        shell: /bin/bash
+
+    - name: Install sudo using apt
+      apt: 
+        name: sudo 
+        state: latest 
+        update_cache: yes
+        force_apt_get: yes
+
+    - name: allow 'docker' to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        line: 'docker ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+    - name: set up authorized keys for the docker user
+      authorized_key: user=docker key="{{item}}"
+      with_file:
+        - ~/.ssh/authorized_keys
+
+    - name: Wipe /etc/hosts
+      file:
+        path: /etc/hosts
+        state: absent
+
+    - name: Update /etc/hosts
+      become: true
+      blockinfile:
+        path: /etc/hosts
+        create: yes
+        block: |
+          127.0.0.1 localhost
+
+          # The following lines are desirable for IPv6 capable hosts
+          ::1 ip6-localhost ip6-loopback
+          fe00::0 ip6-localnet
+          ff00::0 ip6-mcastprefix
+          ff02::1 ip6-allnodes
+          ff02::2 ip6-allrouters
+          ff02::3 ip6-allhosts
+
+          {% for item in ansible_play_batch %}
+          {{ hostvars[item].ansible_host }}   {{ item }}  {{ hostvars[item].ansible_host_alias }}
+          {% endfor %}
+
+    - name: Letting iptables see bridged traffic (1/3)
+      become: true
+      blockinfile:
+        path: /etc/modules-load.d/modules.conf
+        block: |
+          br_netfilter
+
+    - name: Letting iptables see bridged traffic (2/3)
+      become: true
+      copy:
+        dest: /etc/sysctl.d/k8s.conf
+        content: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+
+    - name: Letting iptables see bridged traffic (3/3)
+      shell: sysctl --system
+
+    - name: Disable SWAP since kubernetes can't work with swap enabled (1/2)
+      shell: swapoff -a
+      become: true
+
+    - name: Disable SWAP in fstab since kubernetes can't work with swap enabled (2/2)
+      replace:
+       path: /etc/fstab
+       regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+       replace: '# \1'
+
+    - name: install remote apt deps
+      apt:
+        name: [
+          'apt-transport-https',
+          'ca-certificates',
+          'gnupg2',
+          'software-properties-common'
+        ]
+        state: present
+
+    - name: "[Docker] Add Apt signing key from official repo"
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: "[Docker] add docker official repository for Debian buster"
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/debian   buster stable
+        state: present
+        filename: docker
+
+    - name: "[Kubernetes] add apt-key"
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: "[Kubernetes] APT repository"
+      apt_repository:
+        repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+        filename: 'kubernetes'
+
+    - name: Index new repo into the cache
+      become: yes
+      apt:
+        name: "*"
+        state: latest
+        update_cache: yes
+        force_apt_get: yes  
+  
+    - name: "[Docker] Install"
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: true
+
+    - name: "[Docker] Change default cgroup driver to systemd"
+      become: true
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+          "exec-opts": ["native.cgroupdriver=systemd"],
+          "log-driver": "json-file",
+          "log-opts": {
+          "max-size": "100m"
+          },
+          "storage-driver": "overlay2",
+          "storage-opts": [
+          "overlay2.override_kernel_check=true"
+          ]
+          }
+
+    - name: "[Docker] Creates directory"
+      file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+
+    - name: Just force systemd to re-execute itself (2.8 and above)
+      ansible.builtin.systemd:
+        daemon_reexec: yes
+    - name: " - Kubernate@master -  Restart kubelet"
+      service:
+        name: docker
+        daemon_reload: yes
+        state: restarted
+    
+    - name: "[Kubernates] install remote apt"
+      apt:
+        name: [
+          'kubelet',
+          'kubeadm',
+          'kubectl'
+        ]
+        state: present
+
+
+### -- MASTER 
+
+- hosts: master
+  become: yes
+  tasks:
+    - name: " - Kubernate@master - Configure node ip"
+      become: true
+      blockinfile:
+        path: /etc/default/kubelet
+        create: yes
+        block: |
+          KUBELET_EXTRA_ARGS=--node-ip={{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }} --cgroup-driver=systemd
+
+    - name: " - Kubernate@master -  Restart kubelet"
+      service:
+        name: kubelet
+        daemon_reload: yes
+        state: restarted
+###--node-name {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}
+    - name: " - Kubernate@master - Initialize the Kubernetes cluster using kubeadm"
+      command: kubeadm init --apiserver-advertise-address="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}" --apiserver-cert-extra-sans="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"  --pod-network-cidr=100.65.0.0/16
+
+    - name: " - Kubernate@master - create .kube directory"
+      become: yes
+      become_user: docker
+      file:
+        path: $HOME/.kube
+        state: directory
+        mode: 0755
+
+    - name: " - Kubernate@master - copy admin.conf to user's kube config"
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/docker/.kube/config
+        remote_src: yes
+        owner: docker
+
+    - name: " - Kubernate@master - create .kube directory"
+      become: yes
+      become_user: root
+      file:
+        path: $HOME/.kube
+        state: directory
+        mode: 0755
+
+    - name: " - Kubernate@master - copy admin.conf to user's kube config"
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        owner: root
+
+    - name:  " - Kubernate@master - Install calico pod network"
+      become: false
+#      command: kubectl create -f https://docs.projectcalico.org/v3.4/getting-started/kubernetes/installation/hosted/calico.yaml
+      command: kubectl create -f https://docs.projectcalico.org/manifests/calico.yaml
+
+
+    - name:  " - Kubernate@master - Generate join command"
+      command: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: " - Kubernate@master - Copy join command to local file"
+      local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
+
+  handlers:
+      - name: docker status
+        service: name=docker state=started
+
+### -- NODES
+
+- hosts: workers
+  become: yes
+  tasks:
+  - name: Copy the join command to server location
+    copy: 
+      src: join-command 
+      dest: /tmp/join-command.sh 
+      mode: 0777
+
+  - name: Join the node to cluster
+    command: sh /tmp/join-command.sh
+
+  handlers:
+    - name: docker status
+      service: name=docker state=started
