@@ -196,7 +196,6 @@
         name: kubelet
         daemon_reload: yes
         state: restarted
-###--node-name {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}
     - name: " - Kubernate@master - Initialize the Kubernetes cluster using kubeadm"
       command: kubeadm init --apiserver-advertise-address="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}" --apiserver-cert-extra-sans="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"  --pod-network-cidr=100.65.0.0/16
 
@@ -232,7 +231,6 @@
 
     - name:  " - Kubernate@master - Install calico pod network"
       become: false
-#      command: kubectl create -f https://docs.projectcalico.org/v3.4/getting-started/kubernetes/installation/hosted/calico.yaml
       command: kubectl create -f https://docs.projectcalico.org/manifests/calico.yaml
 
 
